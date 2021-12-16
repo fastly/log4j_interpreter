@@ -82,7 +82,9 @@ fn obfuscate_everything() {
 #[test]
 fn what_does_this_do() {
     let input = "what's that ${::-$}{${::-j}ndi:${::-l}dap:}";
-    assert_eq!("what's that jndi:ldap:", parseu_string(input));
+    let (result, findings) = parseu(input);
+    assert_eq!("what's that jndi:ldap:", result);
+    assert!(findings.saw_jndi);
 }
 #[test]
 fn base64() {
