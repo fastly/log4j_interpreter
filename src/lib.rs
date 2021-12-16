@@ -380,7 +380,9 @@ fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
     } else if let Some(_) = value.strip_prefix(b"jndi:") {
         (value.into(), Some(Handler::Jndi))
     } else if let Some(_) = value.strip_prefix(b"env:") {
-        (value.into(), Some(Handler::Env))
+        // If default exists, we'll use it instead of `value`. If `default` is not defined, it's an
+        // empty slice, which is what we'll use anyway.
+        (default.into(), Some(Handler::Env))
     } else if let Some(_) = value.strip_prefix(b"main:") {
         // We don't know arguments to the `main` function, but we assume attackers don't either.
         // So, assuming that there are no default `main` arguments that can be used to assume an

@@ -92,7 +92,7 @@ fn base64() {
     let input = format!("all your base64 are ${{base64:{}}}", evil);
     let (result, findings) = parseu(&input);
     assert_eq!(
-        "all your base64 are jndi:ldap:env:user.crime.scene/a",
+        "all your base64 are jndi:ldap:.crime.scene/a",
         result
     );
     assert!(findings.saw_jndi);
@@ -159,4 +159,20 @@ fn double_obfuscated_jndi() {
     assert_eq!("hello jndi:", result);
     assert!(findings.saw_jndi);
     assert!(!findings.saw_main);
+}
+#[test]
+fn env_expansion() {
+    // env expands to empty string on the assumption the variable is undefined
+    let input = "this env var does not exist: ${env:var_that_doesnt_exist}";
+    let (result, findings) = parseu(input);
+    assert_eq!("this env var does not exist: ", result);
+    assert!(!findings.saw_jndi);
+    assert!(findings.saw_env);
+
+    // env can have a default value, used instead
+    let input = "this env var does not exist: ${env:var_that_doesnt_exist:-evil_jndi}";
+    let (result, findings) = parseu(input);
+    assert_eq!("this env var does not exist: evil_jndi", result);
+    assert!(!findings.saw_jndi);
+    assert!(findings.saw_env);
 }
