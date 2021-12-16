@@ -69,10 +69,10 @@ fn complex_default_dollar() {
 }
 #[test]
 fn obfuscated_dollar() {
-    assert_eq!(
-        "hello jndi:",
-        parseu_string("hello ${lower:${::-$}{jndi:}}")
-    )
+    let input = "hello ${lower:${::-$}{jndi:}}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
 }
 #[test]
 fn obfuscate_everything() {
