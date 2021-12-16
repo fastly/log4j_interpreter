@@ -332,22 +332,26 @@ impl<'i> DoSubstitute<'i> {
     }
 }
 
-fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
-    const DEFAULT_DELIMITER: &[u8; 2] = b":-";
-    let mut value = input;
-    let mut default = &b""[..];
-
+fn split_slice<'a, T: PartialEq>(input: &'a [T], delim: &'a [T]) -> (&'a [T], &'a [T]) {
+    let mut before: &[T] = input;
+    let mut after: &[T] = &[];
     for (ix, w) in input.windows(2).enumerate() {
-        if DEFAULT_DELIMITER == w {
-            value = &input[0..ix];
+        if delim == w {
+            before = &input[0..ix];
 
-            let default_ix = ix + DEFAULT_DELIMITER.len();
+            let default_ix = ix + delim.len();
             if input.len() >= default_ix {
-                default = &input[default_ix..];
+                after = &input[default_ix..];
             }
             break;
         }
     }
+    (before, after)
+}
+
+fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
+    const DEFAULT_DELIMITER: &[u8; 2] = b":-";
+    let (value, default) = split_slice(input, DEFAULT_DELIMITER);
 
     if let Some(rest) = value.strip_prefix(b"lower:") {
         if let Ok(s) = std::str::from_utf8(rest) {
