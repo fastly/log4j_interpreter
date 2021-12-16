@@ -407,8 +407,8 @@ fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
         // the expansion should leak a `main` argument.
         //
         // Report the `main` handler for the possible information disclosure risk, then assume
-        // empty string expansion in case this was just obfuscatory.
-        ("".into(), Some(Handler::Main))
+        // empty/default string expansion in case this was just obfuscatory.
+        (default.into(), Some(Handler::Main))
     } else if let Some(_) = strip_lower_ascii_prefix(value, b"date:") {
         // `${date:...}` expands a format string using the current time. There isn't a way to
         // select substrings, so month/day strings aren't useful for building an unaccepatble

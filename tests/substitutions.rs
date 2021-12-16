@@ -157,6 +157,13 @@ fn main_lookups() {
     assert!(findings.saw_jndi);
     assert!(findings.saw_main);
 
+    // `main` lookups support default value syntax.
+    let input = "hello ${j${main:foobar:-n}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(findings.saw_main);
+
     // NOTE: this is lossy. A real expansion would look like `${jn/path/to/javadi:}`. This is still not the
     // token we're really concerned about finding, so we're not worried about that detail.
     //
