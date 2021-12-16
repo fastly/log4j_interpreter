@@ -1,0 +1,8 @@
+[package]
+name = "log4j_interpreter"
+authors = ["John VanEnk <jvanenk@fastly.com>"]
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.13"
