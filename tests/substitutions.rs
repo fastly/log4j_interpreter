@@ -112,3 +112,51 @@ fn much_nesting() {
     let input = "${::-h${::-e${::-l${::-l${::-o ${base64:YWRhbQ==}}}}}}";
     assert_eq!("hello adam", parse_str(input, 6).unwrap().0);
 }
+#[test]
+fn date_lookups() {
+    let input = "hello ${jn${date:''}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+
+    // NOTE: this is lossy. A real expansion would look like `${jn2021di:}`. This is still not the
+    // token we're really concerned about finding, so we're not worried about that detail.
+    //
+    // The resulting detection of a `jndi` token will be a false positive.
+    let input = "hello ${jn${date:YYYY}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+}
+#[test]
+fn main_lookups() {
+    let input = "hello ${jn${main:foobar}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(findings.saw_main);
+
+    // NOTE: this is lossy. A real expansion would look like `${jn/path/to/javadi:}`. This is still not the
+    // token we're really concerned about finding, so we're not worried about that detail.
+    //
+    // The resulting detection of a `jndi` token will be a false positive.
+    let input = "hello ${jn${main:0}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(findings.saw_main);
+}
+#[test]
+fn double_obfuscated_jndi() {
+    let input = "hello ${lower:${::-$}{jn${main:foo}di:}}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(findings.saw_main);
+
+    let input = "hello ${lower:${::-$}{jn${date:''}di:}}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(!findings.saw_main);
+}

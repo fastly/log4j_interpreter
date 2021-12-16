@@ -18,6 +18,7 @@ pub struct Findings {
     handlers: Vec<Handler>,
     pub saw_jndi: bool,
     pub saw_env: bool,
+    pub saw_main: bool,
     pub hit_recursion_limit: bool,
 }
 
@@ -27,6 +28,7 @@ impl Findings {
             handlers: Vec::new(),
             saw_jndi: false,
             saw_env: false,
+            saw_main: false,
             hit_recursion_limit: false,
         }
     }
@@ -34,6 +36,7 @@ impl Findings {
     pub fn merge(&mut self, mut new_findings: Findings) {
         self.saw_jndi |= new_findings.saw_jndi;
         self.saw_env |= new_findings.saw_env;
+        self.saw_main |= new_findings.saw_main;
         self.hit_recursion_limit |= new_findings.hit_recursion_limit;
         self.handlers.extend(new_findings.handlers.drain(..));
     }
@@ -325,6 +328,9 @@ impl<'i> DoSubstitute<'i> {
             Some(Handler::Env) => {
                 shared.findings.saw_env = true;
             }
+            Some(Handler::Main) => {
+                shared.findings.saw_main = true;
+            }
             _ => { /* other handlers aren't interesting on their own */ }
         }
 
@@ -375,6 +381,21 @@ fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
         (value.into(), Some(Handler::Jndi))
     } else if let Some(_) = value.strip_prefix(b"env:") {
         (value.into(), Some(Handler::Env))
+    } else if let Some(_) = value.strip_prefix(b"main:") {
+        // We don't know arguments to the `main` function, but we assume attackers don't either.
+        // So, assuming that there are no default `main` arguments that can be used to assume an
+        // undesired expansion in a log4j string, either the expansion should result in a no-op, or
+        // the expansion should leak a `main` argument.
+        //
+        // Report the `main` handler for the possible information disclosure risk, then assume
+        // empty string expansion in case this was just obfuscatory.
+        ("".into(), Some(Handler::Main))
+    } else if let Some(_) = value.strip_prefix(b"date:") {
+        // `${date:...}` expands a format string using the current time. There isn't a way to
+        // select substrings, so month/day strings aren't useful for building an unaccepatble
+        // handler. Assume that if `${date:...}` is showing up in an interesting place, it will be
+        // with some format string that expands to empty string.
+        ("".into(), Some(Handler::Date))
     } else {
         (default.into(), None)
     }
@@ -387,6 +408,8 @@ enum Handler {
     Base64,
     Upper,
     Lower,
+    Main,
+    Date,
 }
 
 pub fn parse(input: &[u8], recursion_limit: usize) -> (Vec<u8>, Findings) {
