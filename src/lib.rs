@@ -355,35 +355,52 @@ fn split_slice<'a, T: PartialEq>(input: &'a [T], delim: &'a [T]) -> (&'a [T], &'
     (before, after)
 }
 
+fn strip_lower_ascii_prefix<'a>(input: &'a [u8], prefix: &'a [u8]) -> Option<&'a [u8]> {
+    // TODO: how to handle `input` consisting of unicode characters that may lowercase to
+    // characteres matching `prefix`, but are not the same by ASCII case rules? eg `ı` -> `i`.
+    // It might just be the case that unicode normalization doesn't apply here.
+
+    if input.len() >= prefix.len() {
+        if input[..prefix.len()].eq_ignore_ascii_case(prefix) {
+            Some(&input[prefix.len()..])
+        } else {
+            None
+        }
+    } else {
+        // cannot possibly match.
+        None
+    }
+}
+
 fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
     const DEFAULT_DELIMITER: &[u8; 2] = b":-";
     let (value, default) = split_slice(input, DEFAULT_DELIMITER);
 
-    if let Some(rest) = value.strip_prefix(b"lower:") {
+    if let Some(rest) = strip_lower_ascii_prefix(value, b"lower:") {
         if let Ok(s) = std::str::from_utf8(rest) {
             (s.to_lowercase().into(), Some(Handler::Lower))
         } else {
             ("ERROR_LOWER_INVALID_UTF8".into(), None)
         }
-    } else if let Some(rest) = value.strip_prefix(b"upper:") {
+    } else if let Some(rest) = strip_lower_ascii_prefix(value, b"upper:") {
         if let Ok(s) = std::str::from_utf8(rest) {
             (s.to_uppercase().into(), Some(Handler::Upper))
         } else {
             ("ERROR_UPPER_INVALID_UTF8".into(), None)
         }
-    } else if let Some(rest) = value.strip_prefix(b"base64:") {
+    } else if let Some(rest) = strip_lower_ascii_prefix(value, b"base64:") {
         if let Ok(d) = base64::decode(rest) {
             (d, Some(Handler::Base64))
         } else {
             ("ERROR_BASE64_DECODE_INVALID".into(), None)
         }
-    } else if let Some(_) = value.strip_prefix(b"jndi:") {
+    } else if let Some(_) = strip_lower_ascii_prefix(value, b"jndi:") {
         (value.into(), Some(Handler::Jndi))
-    } else if let Some(_) = value.strip_prefix(b"env:") {
+    } else if let Some(_) = strip_lower_ascii_prefix(value, b"env:") {
         // If default exists, we'll use it instead of `value`. If `default` is not defined, it's an
         // empty slice, which is what we'll use anyway.
         (default.into(), Some(Handler::Env))
-    } else if let Some(_) = value.strip_prefix(b"main:") {
+    } else if let Some(_) = strip_lower_ascii_prefix(value, b"main:") {
         // We don't know arguments to the `main` function, but we assume attackers don't either.
         // So, assuming that there are no default `main` arguments that can be used to assume an
         // undesired expansion in a log4j string, either the expansion should result in a no-op, or
@@ -392,7 +409,7 @@ fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
         // Report the `main` handler for the possible information disclosure risk, then assume
         // empty string expansion in case this was just obfuscatory.
         ("".into(), Some(Handler::Main))
-    } else if let Some(_) = value.strip_prefix(b"date:") {
+    } else if let Some(_) = strip_lower_ascii_prefix(value, b"date:") {
         // `${date:...}` expands a format string using the current time. There isn't a way to
         // select substrings, so month/day strings aren't useful for building an unaccepatble
         // handler. Assume that if `${date:...}` is showing up in an interesting place, it will be

