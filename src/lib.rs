@@ -9,9 +9,36 @@
 //! expansion that is then forwarded to other logging pipelines.
 //!
 //! I used a type-state approach for the parser so that I could lean on the
-//! compiler to show me stransitions I missed.
+//! compiler to show me state transitions I missed.
 //!
 //! New substitutions should be added to the `subsitute()` function.
+
+#[derive(Debug)]
+pub struct Findings {
+    handlers: Vec<Handler>,
+    pub saw_jndi: bool,
+    pub saw_env: bool,
+    pub hit_recursion_limit: bool,
+}
+
+impl Findings {
+    pub fn new() -> Self {
+        Findings {
+            handlers: Vec::new(),
+            saw_jndi: false,
+            saw_env: false,
+            hit_recursion_limit: false,
+        }
+    }
+
+    pub fn merge(&mut self, mut new_findings: Findings) {
+        self.saw_jndi |= new_findings.saw_jndi;
+        self.saw_env |= new_findings.saw_env;
+        self.hit_recursion_limit |= new_findings.hit_recursion_limit;
+        self.handlers.extend(new_findings.handlers.drain(..));
+    }
+}
+
 #[derive(Debug)]
 enum State<'i> {
     Plain(Plain<'i>),
@@ -24,12 +51,13 @@ enum State<'i> {
 }
 
 impl<'i> State<'i> {
-    fn new(input: &'i [u8], recursion_limit: usize) -> Self {
+    fn new(input: &'i [u8], findings: &'i mut Findings, recursion_limit: usize) -> Self {
         Self::Plain(Plain {
             shared: Shared {
                 recursion_limit,
                 accumulated: Default::default(),
                 rest: input.iter(),
+                findings,
             },
         })
     }
@@ -68,6 +96,7 @@ struct Shared<'i> {
     recursion_limit: usize,
     accumulated: Vec<u8>,
     rest: std::slice::Iter<'i, u8>,
+    findings: &'i mut Findings,
 }
 
 impl<'i> Shared<'i> {
@@ -279,14 +308,26 @@ impl<'i> DoSubstitute<'i> {
     fn step(self) -> State<'i> {
         let Self { mut shared, sub } = self;
 
-        let substituted = if shared.recursion_limit == 0 {
-            "ERROR_RECURSION_LIMIT_REACHED".into()
+        let (substituted, handler) = if shared.recursion_limit == 0 {
+            shared.findings.hit_recursion_limit = true;
+            ("ERROR_RECURSION_LIMIT_REACHED".into(), None)
         } else {
-            let parsed = parse(&sub, shared.recursion_limit - 1);
+            let (parsed, new_findings) = parse(&sub, shared.recursion_limit - 1);
+            shared.findings.merge(new_findings);
             substitute(&parsed)
         };
 
         shared.accumulated.extend_from_slice(&substituted);
+        match handler {
+            Some(Handler::Jndi) => {
+                shared.findings.saw_jndi = true;
+            }
+            Some(Handler::Env) => {
+                shared.findings.saw_env = true;
+            }
+            _ => { /* other handlers aren't interesting on their own */ }
+        }
+
         State::Plain(Plain { shared })
     }
 }
@@ -308,39 +349,50 @@ fn split_slice<'a, T: PartialEq>(input: &'a [T], delim: &'a [T]) -> (&'a [T], &'
     (before, after)
 }
 
-fn substitute(input: &[u8]) -> Vec<u8> {
+fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
     const DEFAULT_DELIMITER: &[u8; 2] = b":-";
     let (value, default) = split_slice(input, DEFAULT_DELIMITER);
 
     if let Some(rest) = value.strip_prefix(b"lower:") {
         if let Ok(s) = std::str::from_utf8(rest) {
-            s.to_lowercase().into()
+            (s.to_lowercase().into(), Some(Handler::Lower))
         } else {
-            "ERROR_LOWER_INVALID_UTF8".into()
+            ("ERROR_LOWER_INVALID_UTF8".into(), None)
         }
     } else if let Some(rest) = value.strip_prefix(b"upper:") {
         if let Ok(s) = std::str::from_utf8(rest) {
-            s.to_uppercase().into()
+            (s.to_uppercase().into(), Some(Handler::Upper))
         } else {
-            "ERROR_UPPER_INVALID_UTF8".into()
+            ("ERROR_UPPER_INVALID_UTF8".into(), None)
         }
     } else if let Some(rest) = value.strip_prefix(b"base64:") {
         if let Ok(d) = base64::decode(rest) {
-            d
+            (d, Some(Handler::Base64))
         } else {
-            "ERROR_BASE64_DECODE_INVALID".into()
+            ("ERROR_BASE64_DECODE_INVALID".into(), None)
         }
     } else if let Some(_) = value.strip_prefix(b"jndi:") {
-        "FORBIDDEN_JNDI".into()
+        (value.into(), Some(Handler::Jndi))
     } else if let Some(_) = value.strip_prefix(b"env:") {
-        "FORBIDDEN_ENV".into()
+        (value.into(), Some(Handler::Env))
     } else {
-        default.into()
+        (default.into(), None)
     }
 }
 
-pub fn parse(input: &[u8], recursion_limit: usize) -> Vec<u8> {
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Handler {
+    Env,
+    Jndi,
+    Base64,
+    Upper,
+    Lower,
+}
+
+pub fn parse(input: &[u8], recursion_limit: usize) -> (Vec<u8>, Findings) {
     let mut input = input.to_owned();
+
+    let mut findings = Findings::new();
 
     // This loop runs until we reach a FIXED POINT. That is, we run until the
     // input and the output are identical. When performing substitutions, it's
@@ -348,7 +400,7 @@ pub fn parse(input: &[u8], recursion_limit: usize) -> Vec<u8> {
     // logging pipelines. By running until we reach a fixed point, we prevent
     // any leakage to further logging systems.
     loop {
-        let mut s = State::new(&input, recursion_limit);
+        let mut s = State::new(&input, &mut findings, recursion_limit);
 
         loop {
             if s.is_done() {
@@ -361,7 +413,7 @@ pub fn parse(input: &[u8], recursion_limit: usize) -> Vec<u8> {
         let current = s.finish();
 
         if current == input {
-            return current;
+            return (current, findings);
         } else {
             input = current;
         }
@@ -371,6 +423,7 @@ pub fn parse(input: &[u8], recursion_limit: usize) -> Vec<u8> {
 pub fn parse_str(
     input: impl AsRef<str>,
     recursion_limit: usize,
-) -> Result<String, std::string::FromUtf8Error> {
-    String::from_utf8(parse(input.as_ref().as_bytes(), recursion_limit))
+) -> Result<(String, Findings), std::string::FromUtf8Error> {
+    let (result, findings) = parse(input.as_ref().as_bytes(), recursion_limit);
+    String::from_utf8(result).map(|s| (s, findings))
 }
