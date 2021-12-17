@@ -9,7 +9,7 @@ This tool assumes any log line has already been decoded before being passed to t
 
 ### Interpolation
 
-This tool assumes it's operating on entire log lines at once. Should the processed lines be passed to additional log aggregators that interpolate values again, this tool does not capture cases where the interpolatd values re-expose a vulnerability.
+This tool assumes it's operating on entire log lines at once. Should the processed lines be passed to additional log aggregators that interpolate values again, this tool does not capture cases where the interpolated values re-expose a vulnerability.
 
 ## Test Executable
 
