@@ -18,6 +18,7 @@ pub struct Findings {
     handlers: Vec<Handler>,
     pub saw_jndi: bool,
     pub saw_env: bool,
+    pub saw_main: bool,
     pub hit_recursion_limit: bool,
 }
 
@@ -27,6 +28,7 @@ impl Findings {
             handlers: Vec::new(),
             saw_jndi: false,
             saw_env: false,
+            saw_main: false,
             hit_recursion_limit: false,
         }
     }
@@ -34,6 +36,7 @@ impl Findings {
     pub fn merge(&mut self, mut new_findings: Findings) {
         self.saw_jndi |= new_findings.saw_jndi;
         self.saw_env |= new_findings.saw_env;
+        self.saw_main |= new_findings.saw_main;
         self.hit_recursion_limit |= new_findings.hit_recursion_limit;
         self.handlers.extend(new_findings.handlers.drain(..));
     }
@@ -325,6 +328,9 @@ impl<'i> DoSubstitute<'i> {
             Some(Handler::Env) => {
                 shared.findings.saw_env = true;
             }
+            Some(Handler::Main) => {
+                shared.findings.saw_main = true;
+            }
             _ => { /* other handlers aren't interesting on their own */ }
         }
 
@@ -349,32 +355,66 @@ fn split_slice<'a, T: PartialEq>(input: &'a [T], delim: &'a [T]) -> (&'a [T], &'
     (before, after)
 }
 
+fn strip_lower_ascii_prefix<'a>(input: &'a [u8], prefix: &'a [u8]) -> Option<&'a [u8]> {
+    // TODO: how to handle `input` consisting of unicode characters that may lowercase to
+    // characteres matching `prefix`, but are not the same by ASCII case rules? eg `ı` -> `i`.
+    // It might just be the case that unicode normalization doesn't apply here.
+
+    if input.len() >= prefix.len() {
+        if input[..prefix.len()].eq_ignore_ascii_case(prefix) {
+            Some(&input[prefix.len()..])
+        } else {
+            None
+        }
+    } else {
+        // cannot possibly match.
+        None
+    }
+}
+
 fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
     const DEFAULT_DELIMITER: &[u8; 2] = b":-";
     let (value, default) = split_slice(input, DEFAULT_DELIMITER);
 
-    if let Some(rest) = value.strip_prefix(b"lower:") {
+    if let Some(rest) = strip_lower_ascii_prefix(value, b"lower:") {
         if let Ok(s) = std::str::from_utf8(rest) {
             (s.to_lowercase().into(), Some(Handler::Lower))
         } else {
             ("ERROR_LOWER_INVALID_UTF8".into(), None)
         }
-    } else if let Some(rest) = value.strip_prefix(b"upper:") {
+    } else if let Some(rest) = strip_lower_ascii_prefix(value, b"upper:") {
         if let Ok(s) = std::str::from_utf8(rest) {
             (s.to_uppercase().into(), Some(Handler::Upper))
         } else {
             ("ERROR_UPPER_INVALID_UTF8".into(), None)
         }
-    } else if let Some(rest) = value.strip_prefix(b"base64:") {
+    } else if let Some(rest) = strip_lower_ascii_prefix(value, b"base64:") {
         if let Ok(d) = base64::decode(rest) {
             (d, Some(Handler::Base64))
         } else {
             ("ERROR_BASE64_DECODE_INVALID".into(), None)
         }
-    } else if let Some(_) = value.strip_prefix(b"jndi:") {
+    } else if let Some(_) = strip_lower_ascii_prefix(value, b"jndi:") {
         (value.into(), Some(Handler::Jndi))
-    } else if let Some(_) = value.strip_prefix(b"env:") {
-        (value.into(), Some(Handler::Env))
+    } else if let Some(_) = strip_lower_ascii_prefix(value, b"env:") {
+        // If default exists, we'll use it instead of `value`. If `default` is not defined, it's an
+        // empty slice, which is what we'll use anyway.
+        (default.into(), Some(Handler::Env))
+    } else if let Some(_) = strip_lower_ascii_prefix(value, b"main:") {
+        // We don't know arguments to the `main` function, but we assume attackers don't either.
+        // So, assuming that there are no default `main` arguments that can be used to assume an
+        // undesired expansion in a log4j string, either the expansion should result in a no-op, or
+        // the expansion should leak a `main` argument.
+        //
+        // Report the `main` handler for the possible information disclosure risk, then assume
+        // empty/default string expansion in case this was just obfuscatory.
+        (default.into(), Some(Handler::Main))
+    } else if let Some(_) = strip_lower_ascii_prefix(value, b"date:") {
+        // `${date:...}` expands a format string using the current time. There isn't a way to
+        // select substrings, so month/day strings aren't useful for building an unaccepatble
+        // handler. Assume that if `${date:...}` is showing up in an interesting place, it will be
+        // with some format string that expands to empty string.
+        ("".into(), Some(Handler::Date))
     } else {
         (default.into(), None)
     }
@@ -387,6 +427,8 @@ enum Handler {
     Base64,
     Upper,
     Lower,
+    Main,
+    Date,
 }
 
 pub fn parse(input: &[u8], recursion_limit: usize) -> (Vec<u8>, Findings) {

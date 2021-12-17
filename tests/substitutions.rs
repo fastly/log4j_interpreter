@@ -60,6 +60,27 @@ fn unicode_obfuscated() {
     assert!(findings.saw_jndi);
 }
 #[test]
+fn various_case_rules() {
+    // It appears that log4j handles tokens like `LoWeR` and `jNdi`, but not unicode characters
+    // that would lowercase to the same thing. Don't know where the matching happens in log4j yet.
+    let (result, findings) =
+        parseu("does this get blocked? ${jndı:ldap://whatever}");
+    assert_eq!("does this get blocked? ", result); // the unknown `jndı` expands to empty string
+    assert!(!findings.saw_jndi);
+
+    // but regular caps do the trick
+    let (result, findings) =
+        parseu("does this get blocked? ${jndI:ldap://whatever}");
+    assert_eq!("does this get blocked? jndI:ldap://whatever", result);
+    assert!(findings.saw_jndi);
+
+    // and work in nested evaluations too
+    let (result, findings) =
+        parseu("does this get blocked? ${jnd${UpPeR:i}:ldap://whatever}");
+    assert_eq!("does this get blocked? jndI:ldap://whatever", result);
+    assert!(findings.saw_jndi);
+}
+#[test]
 fn default_dollar() {
     assert_eq!("$", parseu_string("${::-$}"));
 }
@@ -92,7 +113,7 @@ fn base64() {
     let input = format!("all your base64 are ${{base64:{}}}", evil);
     let (result, findings) = parseu(&input);
     assert_eq!(
-        "all your base64 are jndi:ldap:env:user.crime.scene/a",
+        "all your base64 are jndi:ldap:.crime.scene/a",
         result
     );
     assert!(findings.saw_jndi);
@@ -111,4 +132,75 @@ fn two_default_delimiters() {
 fn much_nesting() {
     let input = "${::-h${::-e${::-l${::-l${::-o ${base64:YWRhbQ==}}}}}}";
     assert_eq!("hello adam", parse_str(input, 6).unwrap().0);
+}
+#[test]
+fn date_lookups() {
+    let input = "hello ${jn${date:''}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+
+    // NOTE: this is lossy. A real expansion would look like `${jn2021di:}`. This is still not the
+    // token we're really concerned about finding, so we're not worried about that detail.
+    //
+    // The resulting detection of a `jndi` token will be a false positive.
+    let input = "hello ${jn${date:YYYY}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+}
+#[test]
+fn main_lookups() {
+    let input = "hello ${jn${main:foobar}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(findings.saw_main);
+
+    // `main` lookups support default value syntax.
+    let input = "hello ${j${main:foobar:-n}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(findings.saw_main);
+
+    // NOTE: this is lossy. A real expansion would look like `${jn/path/to/javadi:}`. This is still not the
+    // token we're really concerned about finding, so we're not worried about that detail.
+    //
+    // The resulting detection of a `jndi` token will be a false positive.
+    let input = "hello ${jn${main:0}di:}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(findings.saw_main);
+}
+#[test]
+fn double_obfuscated_jndi() {
+    let input = "hello ${lower:${::-$}{jn${main:foo}di:}}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(findings.saw_main);
+
+    let input = "hello ${lower:${::-$}{jn${date:''}di:}}";
+    let (result, findings) = parseu(input);
+    assert_eq!("hello jndi:", result);
+    assert!(findings.saw_jndi);
+    assert!(!findings.saw_main);
+}
+#[test]
+fn env_expansion() {
+    // env expands to empty string on the assumption the variable is undefined
+    let input = "this env var does not exist: ${env:var_that_doesnt_exist}";
+    let (result, findings) = parseu(input);
+    assert_eq!("this env var does not exist: ", result);
+    assert!(!findings.saw_jndi);
+    assert!(findings.saw_env);
+
+    // env can have a default value, used instead
+    let input = "this env var does not exist: ${env:var_that_doesnt_exist:-evil_jndi}";
+    let (result, findings) = parseu(input);
+    assert_eq!("this env var does not exist: evil_jndi", result);
+    assert!(!findings.saw_jndi);
+    assert!(findings.saw_env);
 }
