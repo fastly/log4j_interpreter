@@ -16,10 +16,18 @@
 #[derive(Debug)]
 pub struct Findings {
     handlers: Vec<Handler>,
+    /// True when a JNDI substitution is found anywhere in the evaluation.
     pub saw_jndi: bool,
+    /// True when an ENV substitution is found anywhere in the evaluation.
     pub saw_env: bool,
+    /// True when a MAIN substitution is found anywherein the evaluation.
     pub saw_main: bool,
+    /// True when the maximum recursion depth is reached when evaluating
+    /// substitutions.
     pub hit_recursion_limit: bool,
+    /// True when the maximum iteration limit is reached when checking for
+    /// missing `}` characters.
+    pub hit_iteration_limit: bool,
 }
 
 impl Findings {
@@ -30,6 +38,7 @@ impl Findings {
             saw_env: false,
             saw_main: false,
             hit_recursion_limit: false,
+            hit_iteration_limit: false,
         }
     }
 
@@ -431,9 +440,41 @@ enum Handler {
     Date,
 }
 
+/// Performs a [`parse()`], but also checks whether adding a `}` to the end of
+/// the input would alter the result. This also uses fixed-point iteration to
+/// discover all cases where adding a `}` can alter the outcome. Note: this is a
+/// separate function from [`parse()`] because this logic alters the behavior of
+/// escape sequences in log4j (`$${`).
+pub fn parse_with_brace_check(
+    mut input: Vec<u8>,
+    recursion_limit: usize,
+    iteration_limit: usize,
+) -> (Vec<u8>, Findings) {
+    // Start by doing a full parse.
+    let (output, mut findings) = parse(&input, recursion_limit);
+    // Now, setup for the missing brace check.
+    input = output;
+
+    for _ in 0..iteration_limit {
+        input.push(b'}');
+        let (mut output, new_findings) = parse(&input, recursion_limit);
+        if output == input {
+            // No difference in output after adding a brace. We're done.
+            let brace = output.pop().expect("we pop a brace");
+            debug_assert_eq!(b'}', brace);
+            return (output, findings);
+        } else {
+            // There *is* a difference. Merge the findings and try again.
+            input = output;
+            findings.merge(new_findings);
+        }
+    }
+    findings.hit_iteration_limit = true;
+    (input, findings)
+}
+
 pub fn parse(input: &[u8], recursion_limit: usize) -> (Vec<u8>, Findings) {
     let mut input = input.to_owned();
-
     let mut findings = Findings::new();
 
     // This loop runs until we reach a FIXED POINT. That is, we run until the
