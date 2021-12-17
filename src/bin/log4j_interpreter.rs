@@ -14,7 +14,7 @@ fn main() {
                     ..
                 } = findings;
                 println!(
-                    "Substitued: {}\nJNDI: {}\nENV: {}\nRecursion Limit: {}",
+                    "Substituted: {}\nJNDI: {}\nENV: {}\nRecursion Limit: {}",
                     substituted, saw_jndi, saw_env, hit_recursion_limit
                 );
             }
