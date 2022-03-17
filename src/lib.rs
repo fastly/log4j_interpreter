@@ -372,6 +372,62 @@ fn strip_lower_ascii_prefix<'a>(input: &'a [u8], prefix: &'a [u8]) -> Option<&'a
     }
 }
 
+/// `${date:...}` expands a format string using the current time. The date
+/// formatters use SimpleDateFormat
+/// (https://docs.oracle.com/javase/6/docs/api/java/text/SimpleDateFormat.html).
+///
+/// A summary of the formatting rules is copied here:
+///
+/// > Date and time formats are specified by date and time pattern strings.
+/// > Within date and time pattern strings, unquoted letters from 'A' to 'Z' and
+/// > from 'a' to 'z' are interpreted as pattern letters representing the
+/// > components of a date or time string. Text can be quoted using single
+/// > quotes (') to avoid interpretation. "''" represents a single quote. All
+/// > other characters are not interpreted; they're simply copied into the
+/// > output string during formatting or matched against the input string during
+/// > parsing.
+///
+/// We approximate this by copying quoted values literally into the output, and
+/// replacing each formatting character with a space (rather than its actual
+/// value).
+fn substitute_date(input: &[u8]) -> Vec<u8> {
+    let mut last_char = None;
+    let mut quoted = false;
+    let mut output = Vec::new();
+    for b in input {
+        match *b {
+            b'\'' => {
+                if last_char == Some(b'\'') {
+                    // two single quotes in a row is a single quote
+                    output.push(b'\'');
+                    quoted = false;
+                } else if quoted {
+                    // we were already quoted. stop that.
+                    quoted = false;
+                } else {
+                    // we're not currently quoted.
+                    quoted = true;
+                }
+            }
+            b'G' | b'y' | b'M' | b'w' | b'W' | b'D' | b'd' | b'F' | b'E' | b'a' | b'H' | b'k'
+            | b'K' | b'h' | b'm' | b's' | b'S' | b'z' | b'Z' => {
+                if quoted {
+                    output.push(*b);
+                } else {
+                    output.push(b' ');
+                }
+            }
+            other => {
+                output.push(other);
+            }
+        }
+
+        last_char = Some(*b);
+    }
+
+    output
+}
+
 fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
     const DEFAULT_DELIMITER: &[u8; 2] = b":-";
     let (value, default) = split_slice(input, DEFAULT_DELIMITER);
@@ -409,12 +465,8 @@ fn substitute(input: &[u8]) -> (Vec<u8>, Option<Handler>) {
         // Report the `main` handler for the possible information disclosure risk, then assume
         // empty/default string expansion in case this was just obfuscatory.
         (default.into(), Some(Handler::Main))
-    } else if let Some(_) = strip_lower_ascii_prefix(value, b"date:") {
-        // `${date:...}` expands a format string using the current time. There isn't a way to
-        // select substrings, so month/day strings aren't useful for building an unaccepatble
-        // handler. Assume that if `${date:...}` is showing up in an interesting place, it will be
-        // with some format string that expands to empty string.
-        ("".into(), Some(Handler::Date))
+    } else if let Some(date_fmt) = strip_lower_ascii_prefix(value, b"date:") {
+        (substitute_date(date_fmt), Some(Handler::Date))
     } else {
         (default.into(), None)
     }
